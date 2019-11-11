@@ -738,50 +738,47 @@ impl<'mir, 'tcx> MutVisitor<'tcx> for ConstPropagator<'mir, 'tcx> {
         location: Location,
     ) {
         trace!("visit_statement: {:?}", statement);
-        if let StatementKind::Assign(box(ref place, ref mut rval)) = statement.kind {
-            let place_ty: Ty<'tcx> = place
-                .ty(&self.local_decls, self.tcx)
-                .ty;
-            if let Ok(place_layout) = self.tcx.layout_of(self.param_env.and(place_ty)) {
-                if let Some(local) = place.as_local() {
-                    let source = statement.source_info;
-                    if let Some(()) = self.const_prop(rval, place_layout, source, place) {
-                        if self.can_const_prop[local] {
-                            trace!("propagated into {:?}", local);
+        match statement.kind {
+            StatementKind::Assign(box (ref place, ref mut rval)) => {
+                let place_ty: Ty<'tcx> = place.ty(&self.local_decls, self.tcx).ty;
+                if let Ok(place_layout) = self.tcx.layout_of(self.param_env.and(place_ty)) {
+                    if let Some(local) = place.as_local() {
+                        let source = statement.source_info;
+                        if let Some(()) = self.const_prop(rval, place_layout, source, place) {
+                            if self.can_const_prop[local] {
+                                trace!("propagated into {:?}", local);
 
-                            if self.should_const_prop() {
-                                let value =
-                                    self.get_const(local).expect("local was dead/uninitialized");
-                                trace!("replacing {:?} with {:?}", rval, value);
-                                self.replace_with_const(
-                                    rval,
-                                    value,
-                                    statement.source_info,
-                                );
-                            }
-                        } else {
-                            trace!("can't propagate into {:?}", local);
+                                if self.should_const_prop() {
+                                    let value = 
+                                        self.get_const(local).expect("local was dead/uninitialized");
+                                    trace!("replacing {:?} with {:?}", rval, value);
+                                    self.replace_with_const(
+                                        rval,
+                                        value,
+                                        statement.source_info,
+                                    );
+                                }
+                            } else {
+                                trace!("can't propagate into {:?}", local);
                             if local != RETURN_PLACE {
                                 self.remove_const(local);
+                            }
                             }
                         }
                     }
                 }
             }
-        } else {
-            match statement.kind {
-                StatementKind::StorageLive(local) |
-                StatementKind::StorageDead(local) if self.can_const_prop[local] => {
-                    let frame = self.ecx.frame_mut();
-                    frame.locals[local].value =
-                        if let StatementKind::StorageLive(_) = statement.kind {
-                            LocalValue::Uninitialized
-                        } else {
-                            LocalValue::Dead
-                        };
-                }
-                _ => {}
+            StatementKind::StorageLive(local) | StatementKind::StorageDead(local)
+                if self.can_const_prop[local] =>
+            {
+                let frame = self.ecx.frame_mut();
+                frame.locals[local].value = if let StatementKind::StorageLive(_) = statement.kind {
+                    LocalValue::Uninitialized
+                } else {
+                    LocalValue::Dead
+                };
             }
+            _ => {}
         }
 
         self.super_statement(statement, location);
