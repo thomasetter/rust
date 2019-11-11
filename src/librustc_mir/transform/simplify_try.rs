@@ -40,26 +40,21 @@ impl<'tcx> MirPass<'tcx> for SimplifyArmIdentity {
                 [s0, s1, s2] => (s0, s1, s2),
                 _ => continue,
             };
-            debug!("SimplifyArmIdentity - found three stmts");
 
             // Pattern match on the form we want:
             let (local_tmp_s0, local_1, vf_s0) = match match_get_variant_field(s0) {
                 None => continue,
                 Some(x) => x,
             };
-            debug!("SimplifyArmIdentity - get");
             let (local_tmp_s1, local_0, vf_s1) = match match_set_variant_field(s1) {
                 None => continue,
                 Some(x) => x,
             };
-            debug!("SimplifyArmIdentity - set");
-            if local_tmp_s0 != local_tmp_s1 || vf_s0 != vf_s1 {
+            if (local_tmp_s0, vf_s0) != (local_tmp_s1, vf_s1)
+                || Some((local_0, vf_s0.var_idx)) != match_set_discr(s2)
+            {
                 continue;
             }
-            if Some((local_0, vf_s0.var_idx)) != match_set_discr(s2) {
-                continue;
-            }
-            debug!("SimplifyArmIdentity - set_discr");
 
             // Right shape; transform!
             match &mut s0.kind {
