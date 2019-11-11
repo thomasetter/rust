@@ -2101,7 +2101,7 @@ pub enum TyKind {
     Err,
 }
 
-#[derive(Copy, Clone, RustcEncodable, RustcDecodable, Debug, HashStable)]
+#[derive(Copy, Clone, RustcEncodable, RustcDecodable, Debug, HashStable, PartialEq)]
 pub struct InlineAsmOutput {
     pub constraint: Symbol,
     pub is_rw: bool,
@@ -2111,7 +2111,7 @@ pub struct InlineAsmOutput {
 
 // NOTE(eddyb) This is used within MIR as well, so unlike the rest of the HIR,
 // it needs to be `Clone` and use plain `Vec<T>` instead of `HirVec<T>`.
-#[derive(Clone, RustcEncodable, RustcDecodable, Debug, HashStable)]
+#[derive(Clone, RustcEncodable, RustcDecodable, Debug, HashStable, PartialEq)]
 pub struct InlineAsm {
     pub asm: Symbol,
     pub asm_str_style: StrStyle,
