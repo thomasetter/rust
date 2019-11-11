@@ -50,7 +50,8 @@ impl<'tcx> MirPass<'tcx> for SimplifyArmIdentity {
                 None => continue,
                 Some(x) => x,
             };
-            if (local_tmp_s0, vf_s0) != (local_tmp_s1, vf_s1)
+            if local_tmp_s0 != local_tmp_s1
+                || vf_s0 != vf_s1
                 || Some((local_0, vf_s0.var_idx)) != match_set_discr(s2)
             {
                 continue;
@@ -188,7 +189,7 @@ impl<'tcx> MirPass<'tcx> for SimplifyBranchSame {
 
 /*
 
-KEEPSAKE: TODO REMOVE IF NOT NECESSARY!
+KEEPSAKE: REMOVE IF NOT NECESSARY!
 
 fn statement_semantic_eq(sa: &StatementKind<'_>, sb: &StatementKind<'_>) -> bool {
     use StatementKind::*;
