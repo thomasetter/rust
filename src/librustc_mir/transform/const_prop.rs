@@ -22,7 +22,7 @@ use rustc::ty::subst::InternalSubsts;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_index::vec::IndexVec;
 use rustc::ty::layout::{
-    LayoutOf, TyLayout, LayoutError, HasTyCtxt, TargetDataLayout, HasDataLayout, Size,
+    LayoutOf, TyLayout, LayoutError, HasTyCtxt, TargetDataLayout, HasDataLayout, Size, VariantIdx,
 };
 
 use crate::rustc::ty::subst::Subst;
@@ -582,6 +582,36 @@ impl<'mir, 'tcx> ConstPropagator<'mir, 'tcx> {
         })
     }
 
+    fn const_discriminant_prop(
+        &mut self,
+        variant_index: &VariantIdx,
+        _place_layout: TyLayout<'tcx>,
+        source_info: SourceInfo,
+        place: &Place<'tcx>,
+    ) -> Option<()> {
+        //let span = source_info.span;
+
+        //let overflow_check = self.tcx.sess.overflow_checks();
+
+        // Perform any special handling for specific Rvalue types.
+        // Generally, checks here fall into one of two categories:
+        //   1. Additional checking to provide useful lints to the user
+        //        - In this case, we will do some validation and then fall through to the
+        //          end of the function which evals the assignment.
+        //   2. Working around bugs in other parts of the compiler
+        //        - In this case, we'll return `None` from this function to stop evaluation.
+
+        self.use_ecx(source_info, |this| {
+            //TODO: update trace message
+            trace!("calling eval_rvalue_into_place(variant_index = {:?}, place = {:?})", variant_index, place);
+            let var_val = variant_index.as_u32();
+            let dest = this.ecx.eval_place(place)?;
+            this.ecx.write_scalar(Scalar::from_u32(var_val), dest)?;
+            this.ecx.dump_place(*dest);
+            Ok(())
+        })
+    }
+
     fn operand_from_scalar(&self, scalar: Scalar, ty: Ty<'tcx>, span: Span) -> Operand<'tcx> {
         Operand::Constant(Box::new(
             Constant {
@@ -691,6 +721,8 @@ impl<'tcx> Visitor<'tcx> for CanConstProp {
         context: PlaceContext,
         _: Location,
     ) {
+        info!("local: {:?}", local);
+        info!("context: {:?}", context);
         use rustc::mir::visit::PlaceContext::*;
         match context {
             // Constants must have at most one write
@@ -717,6 +749,137 @@ impl<'tcx> Visitor<'tcx> for CanConstProp {
     }
 }
 
+fn print_rval<'tcx>(
+        rvalue: &Rvalue<'tcx>,
+){
+    match rvalue {
+            Rvalue::Use(ref place) => info!( "place {:?}", place),
+            Rvalue::Repeat(ref a, ref b) => info!( "[{:?}; {:?}]", a, b),
+            Rvalue::Len(ref a) => info!( "Len({:?})", a),
+            Rvalue::Cast(ref kind, ref place, ref ty) => {
+                info!( "Cast {:?} as {:?} ({:?})", place, ty, kind)
+            }
+            Rvalue::BinaryOp(ref op, ref a, ref b) => info!( "BinaryOp {:?}({:?}, {:?})", op, a, b),
+            Rvalue::CheckedBinaryOp(ref op, ref a, ref b) => {
+                info!( "Checked{:?}({:?}, {:?})", op, a, b)
+            }
+            Rvalue::UnaryOp(ref op, ref a) => info!( "UnaryOp {:?}({:?})", op, a),
+            Rvalue::Discriminant(ref place) => info!( "discriminant({:?})", place),
+            Rvalue::NullaryOp(ref op, ref t) => info!( "NullaryOp {:?}({:?})", op, t),
+            Rvalue::Ref(region, borrow_kind, ref place) => {
+                let kind_str = match borrow_kind {
+                    rustc::mir::BorrowKind::Shared => "",
+                    rustc::mir::BorrowKind::Shallow => "shallow ",
+                    rustc::mir::BorrowKind::Mut { .. } | rustc::mir::BorrowKind::Unique => "mut ",
+                };
+
+                // When printing regions, add trailing space if necessary.
+                let print_region = ty::tls::with(|tcx| {
+                    tcx.sess.verbose() || tcx.sess.opts.debugging_opts.identify_regions
+                });
+                let region = if print_region {
+                    let mut region = region.to_string();
+                    if region.len() > 0 {
+                        region.push(' ');
+                    }
+                    region
+                } else {
+                    // Do not even print 'static
+                    String::new()
+                };
+                info!( "&{}{}{:?}", region, kind_str, place);
+            }
+            Rvalue::Aggregate(ref kind, ref places) => { 
+                info!("Aggregate({:?}, {:?})", kind, places);
+                match **kind {
+                     AggregateKind::Array(_) => {info!("AggregateKind::Array");},
+                     AggregateKind::Tuple => {info!("AggregateKind::Tuple");},
+                     AggregateKind::Adt(adt_def, variant, substs, _user_ty, _) => {
+                         info!("adt_def: {:?}, variant: {:?}, substs: {:?}, _user_ty: {:?}", adt_def, variant, substs, _user_ty);
+                     }
+                     AggregateKind::Closure(_, _) => {
+info!("AggregateKind::Closure");
+                     }
+                     AggregateKind::Generator(_, _, _) => {
+info!("AggregateKind::Generator");
+                     }
+                }
+                //     AggregateKind::Tuple => match places.len() {
+                //         0 => write!(fmt, "()"),
+                //         1 => write!(fmt, "({:?},)", places[0]),
+                //         _ => fmt_tuple(fmt, places),
+                //     },
+
+                //     AggregateKind::Adt(adt_def, variant, substs, _user_ty, _) => {
+                //         let variant_def = &adt_def.variants[variant];
+
+                //         let f = &mut *fmt;
+                //         ty::tls::with(|tcx| {
+                //             let substs = tcx.lift(&substs).expect("could not lift for printing");
+                //             FmtPrinter::new(tcx, f, Namespace::ValueNS)
+                //                 .print_def_path(variant_def.def_id, substs)?;
+                //             Ok(())
+                //         })?;
+
+                //         match variant_def.ctor_kind {
+                //             CtorKind::Const => Ok(()),
+                //             CtorKind::Fn => fmt_tuple(fmt, places),
+                //             CtorKind::Fictive => {
+                //                 let mut struct_fmt = fmt.debug_struct("");
+                //                 for (field, place) in variant_def.fields.iter().zip(places) {
+                //                     struct_fmt.field(&field.ident.as_str(), place);
+                //                 }
+                //                 struct_fmt.finish()
+                //             }
+                //         }
+                //     }
+
+                //     AggregateKind::Closure(def_id, _) => ty::tls::with(|tcx| {
+                //         if let Some(hir_id) = tcx.hir().as_local_hir_id(def_id) {
+                //             let name = if tcx.sess.opts.debugging_opts.span_free_formats {
+                //                 format!("[closure@{:?}]", hir_id)
+                //             } else {
+                //                 format!("[closure@{:?}]", tcx.hir().span(hir_id))
+                //             };
+                //             let mut struct_fmt = fmt.debug_struct(&name);
+
+                //             if let Some(upvars) = tcx.upvars(def_id) {
+                //                 for (&var_id, place) in upvars.keys().zip(places) {
+                //                     let var_name = tcx.hir().name(var_id);
+                //                     struct_fmt.field(&var_name.as_str(), place);
+                //                 }
+                //             }
+
+                //             struct_fmt.finish()
+                //         } else {
+                //             write!(fmt, "[closure]")
+                //         }
+                //     }),
+
+                //     AggregateKind::Generator(def_id, _, _) => ty::tls::with(|tcx| {
+                //         if let Some(hir_id) = tcx.hir().as_local_hir_id(def_id) {
+                //             let name = format!("[generator@{:?}]", tcx.hir().span(hir_id));
+                //             let mut struct_fmt = fmt.debug_struct(&name);
+
+                //             if let Some(upvars) = tcx.upvars(def_id) {
+                //                 for (&var_id, place) in upvars.keys().zip(places) {
+                //                     let var_name = tcx.hir().name(var_id);
+                //                     struct_fmt.field(&var_name.as_str(), place);
+                //                 }
+                //             }
+
+                //             struct_fmt.finish()
+                //         } else {
+                //             write!(fmt, "[generator]")
+                //         }
+                //     }),
+                // }
+            }
+    }
+
+}
+
+
 impl<'mir, 'tcx> MutVisitor<'tcx> for ConstPropagator<'mir, 'tcx> {
     fn tcx(&self) -> TyCtxt<'tcx> {
         self.tcx
@@ -738,8 +901,11 @@ impl<'mir, 'tcx> MutVisitor<'tcx> for ConstPropagator<'mir, 'tcx> {
         location: Location,
     ) {
         trace!("visit_statement: {:?}", statement);
+        info!("statement.kind is {:?}", statement.kind);
         match statement.kind {
             StatementKind::Assign(box (ref place, ref mut rval)) => {
+                info!("place: {:?}, rval: {:?}", &place, &rval);
+                print_rval(rval);
                 let place_ty: Ty<'tcx> = place.ty(&self.local_decls, self.tcx).ty;
                 if let Ok(place_layout) = self.tcx.layout_of(self.param_env.and(place_ty)) {
                     if let Some(local) = place.as_local() {
@@ -757,6 +923,36 @@ impl<'mir, 'tcx> MutVisitor<'tcx> for ConstPropagator<'mir, 'tcx> {
                                         value,
                                         statement.source_info,
                                     );
+                                }
+                            } else {
+                                trace!("can't propagate into {:?}", local);
+                                self.remove_const(local);
+                            }
+                        }
+                    }
+                }
+            }
+            StatementKind::SetDiscriminant{ref place, ref mut variant_index} => {
+                info!("StatementKind::SetDiscriminant {:?}, {:?}", &place, &variant_index);
+                let place_ty: Ty<'tcx> = place.ty(&self.local_decls, self.tcx).ty;
+                if let Ok(place_layout) = self.tcx.layout_of(self.param_env.and(place_ty)) {
+                    if let Some(local) = place.as_local() {
+                        let source = statement.source_info;
+                        if let Some(()) = self.const_discriminant_prop(variant_index, place_layout, source, place) {
+                            if self.can_const_prop[local] {
+                                trace!("propagated into {:?}", local);
+
+                                if self.should_const_prop() {
+                                    let value = 
+                                        self.get_const(local).expect("local was dead/uninitialized");
+                                    trace!("replacing {:?} with {:?}", variant_index, value);
+                                    /*
+                                    self.replace_with_const(
+                                        variant_index,
+                                        value,
+                                        statement.source_info,
+                                    );
+                                    */
                                 }
                             } else {
                                 trace!("can't propagate into {:?}", local);
